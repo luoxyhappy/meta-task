@@ -1,12 +1,15 @@
+#每个网络输出为单个值，不为二分类
 import torch
 from models.convNet3 import ConvNet
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
 from torchvision import datasets, transforms
-from models.resnet import ResNet18
-device  = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-epoch_num=100
+from utils import label_to_onehot
+from models.modified_resnet import ResNet18
+epoch_num = 100
+device  = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+
 num_classes = 10
 train_transform = transforms.Compose([transforms.RandomCrop((32, 32), padding=4),
                                         transforms.RandomHorizontalFlip(p=0.5),
@@ -22,57 +25,63 @@ trainloader = torch.utils.data.DataLoader(dataset_train, batch_size=64,
                                           shuffle=True, num_workers=2)
 testloader = torch.utils.data.DataLoader(dataset_test, batch_size=64,
                                          shuffle=False, num_workers=2)
-#train
-# models = []
-# for i in range(num_classes):
-#     models.append(convNet)
-net = ResNet18().to(device)
 
+nets = []
+for i in range(num_classes):
+    nets.append(ResNet18(num_classes=1).to(device))
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.01)
+parameters_to_optimize = list(nets[0].parameters()) + list(nets[1].parameters()) + list(nets[2].parameters()) + list(nets[3].parameters()) + list(nets[4].parameters()) + list(nets[5].parameters()) + list(nets[6].parameters()) + list(nets[7].parameters()) + list(nets[8].parameters()) + list(nets[9].parameters())
+optimizer = optim.SGD(parameters_to_optimize, lr=0.01)
 # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.9)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epoch_num)
 acc = []
 for epoch in range(epoch_num):  # 迭代10个epoch
+    print(epoch)
     total = 0
     correct = 0
     class_correct = [0 for i in range(num_classes)]
-    print(epoch)
     running_loss = 0.0
-    net.train()
+    for i in range(num_classes):
+        nets[i].train()
     for i, data in enumerate(trainloader):
         inputs, labels = data[0].to(device),data[1].to(device)
-
+        outputs = []
         optimizer.zero_grad()
-
-        outputs = net(inputs)
-        loss = criterion(outputs, labels)
+        for net in nets:
+            outputs.append(net(inputs)) #10 * 64 *1
+        predictions = torch.cat(outputs, dim=1)
+        loss = criterion(predictions, labels)
         loss.backward()
         optimizer.step()
-        running_loss += loss.item()
-        _, predicted = torch.max(outputs.data, 1)
+        _, predicted = torch.max(predictions.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
         for pred,true_label in zip(predicted,labels):
             if pred == true_label:
                 class_correct[pred] += 1
+
+        running_loss += loss.item()
         if i % 200 == 199:    # 每200个batch打印一次损失
             print('[%d, %5d] loss: %.3f' %
                   (epoch + 1, i + 1, running_loss / 200))
             running_loss = 0.0
     scheduler.step()
-    print('Accuracy on the test set: %.2f'%(100 * correct / total))
-    print(class_correct)
     print('Finished Training')
+    print('Accuracy on the train set: %.2f'%(100 * correct / total))
+    print(class_correct)
 
     #test
-    net.eval()
+    for i in range(num_classes):
+        nets[i].eval()
     total = 0
     correct = 0
     class_correct = [0 for i in range(num_classes)]
     for i,data in enumerate(testloader):
         images, labels = data[0].to(device),data[1].to(device)
-        outputs = net(images)
+        outputs = []
+        for net in nets:
+            outputs.append(net(images)) #10*64*1
+        outputs =  torch.cat(outputs, dim=1) #64*10
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
@@ -83,4 +92,4 @@ for epoch in range(epoch_num):  # 迭代10个epoch
     print(class_correct)
     acc.append(100 * correct / total)
 print(acc)
-torch.save(net.state_dict(),'./checkpoint/onemodel.pt')
+
